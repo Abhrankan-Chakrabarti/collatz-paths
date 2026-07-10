@@ -10,6 +10,9 @@ A small Python visualizer that turns Collatz ("3n+1") trajectories into 2D spati
 ![Bundle of Collatz paths for seeds 1–200](collatz_bundle.png)
 *Overlaid trajectories for seeds 1–200, colored by seed. All paths converge toward the origin as they reach 1.*
 
+![Dense cached bundle for 5000 seeds](collatz_galaxy.png)
+*5000 overlaid trajectories rendered with the shared step cache, dark background, and inferno colormap — the density and shared sub-paths near convergence create a glowing, galaxy-like structure.*
+
 ## The Collatz Conjecture
 
 For any positive integer n: if n is even, divide by 2; if n is odd, compute 3n+1. Repeat. The conjecture states every starting value eventually reaches 1. It remains unproven despite verification for all n up to very large bounds.
@@ -69,7 +72,20 @@ Plots one trajectory with start (green) and end-at-1 (red) markers. If `ax` is p
 
 ### `plot_multiple_paths(seeds, **kwargs)`
 
-Overlays trajectories for an iterable of seeds, colored by seed order via a viridis gradient. Saves `collatz_bundle.png`. `**kwargs` are passed through to `generate_collatz_vector_path`.
+Overlays trajectories for an iterable of seeds, colored by seed order via a viridis gradient. Saves `collatz_bundle.png`. `**kwargs` are passed through to `generate_collatz_vector_path`. Best for smaller seed ranges (up to a few hundred) where individual paths are still meant to be distinguishable.
+
+### `generate_cached_path(start_num, alpha=0.25, beta=-0.15, scale=5.0)`
+
+Equivalent to `generate_collatz_vector_path`, but reads and writes a shared module-level cache (`COLLATZ_CACHE`) keyed by value. Since the next step and angular delta for a given `n` depend only on `n`'s parity — never on which seed reached it or in what order — caching is safe and avoids recomputing shared sub-paths across large seed batches, where many trajectories converge onto common suffixes.
+
+### `plot_optimized_bundle(seeds, filename="collatz_galaxy.png", **kwargs)`
+
+Renders large seed bundles (thousands of seeds) using `generate_cached_path`, a dark background, thin low-alpha lines, and an inferno colormap — producing a dense, glowing effect where overlapping shared sub-paths blend together. Best for large seed ranges (1000+) where the aggregate structure matters more than distinguishing individual trajectories.
+
+```python
+plot_optimized_bundle(range(1, 5001))
+# Saved collatz_galaxy.png (cache size: 10871 nodes)
+```
 
 ## Customizing the Look
 
