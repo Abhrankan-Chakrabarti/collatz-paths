@@ -83,80 +83,100 @@ def plot_multiple_paths(seeds, **kwargs):
 
 
 # ---------------------------------------------------------------------------
-# Cached / large-scale rendering path
+# Shared-tree rendering path (v1.2.0+)
 #
-# For thousands of seeds, many trajectories share long common suffixes
-# (all paths converge toward 1, and intermediate values repeat across
-# different starting seeds). Caching each visited value's next step and
-# angular delta avoids recomputing shared sub-paths, and is safe because
-# the next step and angle for a given n depend only on n's parity — never
-# on which starting seed reached it or in what order.
+# For thousands of seeds, many trajectories converge onto the same
+# intermediate values on their way to 1. GEOMETRY_CACHE maps each value n
+# directly to an *absolute* (theta, x, y) — computed once, relative to the
+# fixed anchor n=1 at the origin. This guarantees every path that reaches a
+# given n arrives at exactly the same point in space, producing a true
+# shared tree rather than approximately-overlapping copies.
+#
+# (An earlier version cached each value's *relative* angle delta and
+# accumulated it per-path via cumsum — but two different-length paths
+# reaching the same n would accumulate different absolute angles, so the
+# same number landed in different places depending on which path visited
+# it. That produced a denser but geometrically inconsistent "galaxy" look.
+# Anchoring every value's angle to n=1 fixes this.)
+#
+# compute_spatial_node is iterative rather than recursive: Python's default
+# recursion limit (1000) can be exceeded by individual Collatz trajectories,
+# which are empirically unbounded and reach into the thousands of steps for
+# some starting values.
 # ---------------------------------------------------------------------------
 
-COLLATZ_CACHE = {1: (1, 0.0)}
+GEOMETRY_CACHE = {1: {"theta": 0.0, "x": 0.0, "y": 0.0}}
 
 
-def get_next_collatz_step(n, alpha=0.25, beta=-0.15):
-    """Retrieves next step and angle drift, using a shared cache."""
-    if n in COLLATZ_CACHE:
-        return COLLATZ_CACHE[n]
+def compute_spatial_node(n, alpha=0.25, beta=-0.15, scale=5.0):
+    """Computes and caches the absolute angle and coordinates for n."""
+    # Walk forward from n, collecting the chain of uncached values
+    chain = []
+    current = n
+    while current not in GEOMETRY_CACHE:
+        chain.append(current)
+        current = current // 2 if current % 2 == 0 else 3 * current + 1
 
-    if n % 2 == 0:
-        next_n = n // 2
-        delta_theta = beta
-    else:
-        next_n = 3 * n + 1
-        delta_theta = alpha
+    # Walk the chain backwards, computing each node from its known parent
+    parent = GEOMETRY_CACHE[current]
+    for value in reversed(chain):
+        delta_theta = beta if value % 2 == 0 else alpha
+        absolute_theta = parent["theta"] + delta_theta
+        r = np.log(value + 1) * scale
+        node = {
+            "theta": absolute_theta,
+            "x": r * np.cos(absolute_theta),
+            "y": r * np.sin(absolute_theta),
+        }
+        GEOMETRY_CACHE[value] = node
+        parent = node
 
-    COLLATZ_CACHE[n] = (next_n, delta_theta)
-    return next_n, delta_theta
+    return GEOMETRY_CACHE[n]
 
 
 def generate_cached_path(start_num, alpha=0.25, beta=-0.15, scale=5.0):
-    """Generates a path using the shared step cache — faster for large seed batches."""
+    """Generates a path using the shared geometry cache — faster and
+    geometrically consistent for large seed batches."""
     current = start_num
-    path_nums = [current]
-    angle_deltas = [0.0]
+    path_coords = []
 
-    while current > 1:
-        current, delta = get_next_collatz_step(current, alpha, beta)
-        path_nums.append(current)
-        angle_deltas.append(delta)
+    while True:
+        node = compute_spatial_node(current, alpha, beta, scale)
+        path_coords.append([node["x"], node["y"]])
+        if current == 1:
+            break
+        current = current // 2 if current % 2 == 0 else 3 * current + 1
 
-    path_nums = np.array(path_nums)
-    cum_theta = np.cumsum(angle_deltas)
-
-    r = np.log(path_nums + 1) * scale
-    x = r * np.cos(cum_theta)
-    y = r * np.sin(cum_theta)
-
-    return np.column_stack((x, y))
+    return np.array(path_coords)
 
 
-def plot_optimized_bundle(seeds, filename="collatz_galaxy.png", **kwargs):
+def plot_optimized_bundle(seeds, filename="collatz_galaxy.png", alpha=0.25, beta=-0.15, scale=5.0):
     """
-    Renders large, dense seed bundles (thousands of seeds) efficiently using
-    the shared step cache, a dark background, and a low-alpha inferno
-    colormap. Produces a denser, more glowing effect than plot_multiple_paths
-    — best suited for large seed ranges (1000+) where individual trajectories
-    aren't meant to be distinguished, only the aggregate structure.
+    Renders large seed bundles (thousands of seeds) using the shared
+    geometry cache, a dark background, and a low-alpha inferno colormap.
+    Because every shared value maps to one fixed point, paths visually
+    fuse into common trunks rather than forming separate near-overlapping
+    strands — best suited for large seed ranges (1000+) where the aggregate
+    tree structure matters more than distinguishing individual trajectories.
     """
-    fig, ax = plt.subplots(figsize=(12, 12), facecolor="#111111")
-    ax.set_facecolor("#111111")
+    for seed in seeds:
+        compute_spatial_node(seed, alpha, beta, scale)
 
-    colors = cm.inferno(np.linspace(0.3, 0.95, len(seeds)))
+    fig, ax = plt.subplots(figsize=(12, 12), facecolor="#0B0B10")
+    ax.set_facecolor("#0B0B10")
+
+    colors = cm.inferno(np.linspace(0.25, 0.9, len(seeds)))
 
     for seed, color in zip(seeds, colors):
-        path = generate_cached_path(seed, **kwargs)
-        # Low alpha + thin lines create a glowing filament effect where paths overlap
-        ax.plot(path[:, 0], path[:, 1], color=color, linewidth=0.4, alpha=0.3)
+        path = generate_cached_path(seed, alpha, beta, scale)
+        ax.plot(path[:, 0], path[:, 1], color=color, linewidth=0.3, alpha=0.25)
 
     ax.set_aspect("equal")
     ax.axis("off")
 
     plt.tight_layout()
     plt.savefig(filename, dpi=300, facecolor=fig.get_facecolor(), edgecolor="none")
-    print(f"Saved {filename} (cache size: {len(COLLATZ_CACHE)} nodes)")
+    print(f"Saved {filename} ({len(GEOMETRY_CACHE)} unique structural nodes)")
     plt.close(fig)
 
 
@@ -169,5 +189,5 @@ if __name__ == "__main__":
     # Bundle of paths for a range of seeds, to see the branching structure
     plot_multiple_paths(range(1, 201))
 
-    # Large-scale cached render for a dense, glowing "galaxy" effect
-    plot_optimized_bundle(range(1, 5001))
+    # Large-scale shared-tree render for a unified, fused "galaxy" effect
+    plot_optimized_bundle(range(1, 10001), alpha=0.21, beta=-0.13, scale=8.0)

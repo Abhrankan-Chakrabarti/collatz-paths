@@ -10,8 +10,8 @@ A small Python visualizer that turns Collatz ("3n+1") trajectories into 2D spati
 ![Bundle of Collatz paths for seeds 1–200](collatz_bundle.png)
 *Overlaid trajectories for seeds 1–200, colored by seed. All paths converge toward the origin as they reach 1.*
 
-![Dense cached bundle for 5000 seeds](collatz_galaxy.png)
-*5000 overlaid trajectories rendered with the shared step cache, dark background, and inferno colormap — the density and shared sub-paths near convergence create a glowing, galaxy-like structure.*
+![Shared-tree bundle for 10,000 seeds](collatz_galaxy.png)
+*10,000 trajectories rendered against a shared geometry cache — every occurrence of the same value maps to one fixed point in space regardless of which seed's path reaches it, fusing shared sub-paths into unified trunks rather than overlapping strands.*
 
 ## The Collatz Conjecture
 
@@ -74,17 +74,25 @@ Plots one trajectory with start (green) and end-at-1 (red) markers. If `ax` is p
 
 Overlays trajectories for an iterable of seeds, colored by seed order via a viridis gradient. Saves `collatz_bundle.png`. `**kwargs` are passed through to `generate_collatz_vector_path`. Best for smaller seed ranges (up to a few hundred) where individual paths are still meant to be distinguishable.
 
+### `compute_spatial_node(n, alpha=0.25, beta=-0.15, scale=5.0)`
+
+Computes and caches the **absolute** angle and (x, y) position for value `n`, anchored to a fixed reference point at n=1 (theta=0, origin). Every value's position is computed once, relative to its parent in the Collatz chain, walking back to the nearest already-cached ancestor. This guarantees that whenever two different seeds' trajectories pass through the same value, they arrive at exactly the same point in space — producing a true shared tree.
+
+Implemented iteratively rather than recursively: Python's default recursion limit (1000) can be exceeded by individual Collatz trajectories, which are empirically unbounded and reach into the thousands of steps for some starting values.
+
 ### `generate_cached_path(start_num, alpha=0.25, beta=-0.15, scale=5.0)`
 
-Equivalent to `generate_collatz_vector_path`, but reads and writes a shared module-level cache (`COLLATZ_CACHE`) keyed by value. Since the next step and angular delta for a given `n` depend only on `n`'s parity — never on which seed reached it or in what order — caching is safe and avoids recomputing shared sub-paths across large seed batches, where many trajectories converge onto common suffixes.
+Equivalent to `generate_collatz_vector_path`, but built on `compute_spatial_node`'s shared geometry cache (`GEOMETRY_CACHE`) instead of computing each path's angles independently. Faster and geometrically consistent across large seed batches — see note below on why this matters.
 
-### `plot_optimized_bundle(seeds, filename="collatz_galaxy.png", **kwargs)`
+> **Note on an earlier caching approach:** a previous version cached each value's *relative* angular delta and accumulated it per-path via a running sum. Two different-length paths reaching the same value would accumulate different absolute angles, so the same number could land in different places depending on which path visited it — producing a denser but geometrically inconsistent image. Anchoring every value's angle to n=1 (as `compute_spatial_node` does) fixes this: shared values now always land at the same point.
 
-Renders large seed bundles (thousands of seeds) using `generate_cached_path`, a dark background, thin low-alpha lines, and an inferno colormap — producing a dense, glowing effect where overlapping shared sub-paths blend together. Best for large seed ranges (1000+) where the aggregate structure matters more than distinguishing individual trajectories.
+### `plot_optimized_bundle(seeds, filename="collatz_galaxy.png", alpha=0.25, beta=-0.15, scale=5.0)`
+
+Renders large seed bundles (thousands of seeds) using the shared geometry cache, a dark background, thin low-alpha lines, and an inferno colormap. Because shared values map to one fixed point, trajectories visually fuse into common trunks rather than forming separate near-overlapping strands. Best for large seed ranges (1000+) where the aggregate tree structure matters more than distinguishing individual trajectories.
 
 ```python
-plot_optimized_bundle(range(1, 5001))
-# Saved collatz_galaxy.png (cache size: 10871 nodes)
+plot_optimized_bundle(range(1, 10001), alpha=0.21, beta=-0.13, scale=8.0)
+# Saved collatz_galaxy.png (21664 unique structural nodes)
 ```
 
 ## Customizing the Look
